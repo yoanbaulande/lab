@@ -1,0 +1,9 @@
+---
+# handlers file for roles/consul
+
+- name: reload_daemon_and_restart_consul
+  systemd:
+    name: consul
+    state: restarted
+    daemon_reload: yes
+    enabled: yes

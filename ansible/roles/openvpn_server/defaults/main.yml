@@ -1,0 +1,10 @@
+---
+# defaults file for roles/openvpn
+vpn_server_name: infovpn
+vpn_key_name: serveurVPN
+vpn_key_country: EU
+vpn_key_province: FR
+vpn_key_city: Paris
+vpn_key_org: yoanOrg
+vpn_key_email: yoan@mail.fr
+vpn_key_ou: yoan

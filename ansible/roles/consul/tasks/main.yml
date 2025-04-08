@@ -1,0 +1,78 @@
+---
+# tasks file for roles/consul
+
+- name: install utils
+  ansible.builtin.apt:
+    name:
+      - curl
+      - wget
+      - unzip
+      - net-tools
+    state: present
+    update_cache: yes
+    cache_valid_time: 3600
+
+- name: create group consul
+  ansible.builtin.group:
+    name: consul
+    system: yes
+    state: present
+
+- name: create user consul
+  ansible.builtin.user:
+    name: consul
+    system: yes
+    shell: /sbin/nologin
+    state: present
+
+- name: create directory for consul agent data
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: 0750
+    owner: consul
+    group: consul
+  loop:
+    - "{{ consul_dir_data }}"
+    - "{{ consul_dir_config }}"
+
+- name: check if consul exists
+  ansible.builtin.stat:
+    path: "{{ consul_binary_path }}/consul"
+  register: __consul_exists
+
+- name: if consul exists get version
+  ansible.builtin.shell: "cat /etc/systemd/system/consul.service | grep Version | sed s/'.*Version '//g"
+  register: __consul_get_version
+  when: __consul_exists.stat.exists == true
+  changed_when: false
+
+- name: download consul
+  ansible.builtin.unarchive:
+    src: https://releases.hashicorp.com/consul/{{ consul_version }}/consul_{{ consul_version }}_linux_amd64.zip        
+    dest: "{{ consul_binary_path }}"
+    remote_src: yes
+    mode: 0750
+    owner: consul
+    group: consul
+  when: __consul_exists.stat.exists == False or not __consul_get_version.stdout == consul_version
+
+- name: create service consul for agent
+  ansible.builtin.template:
+    src: "{{ item.file }}.j2"
+    dest: "{{ item.path }}/{{ item.file }}"
+    mode: 0750
+    owner: "{{ item.user }}"
+    group: "{{ item.user }}"
+  loop:
+  - { path: "/etc/systemd/system" ,file: "consul.service", user: "root" }
+  - { path: "{{ consul_dir_config }}" ,file: "config.json", user: "consul" }
+  notify: reload_daemon_and_restart_consul
+
+- meta: flush_handlers
+
+- name: start consul
+  ansible.builtin.service:
+    name: consul
+    state: started
+    enabled: yes

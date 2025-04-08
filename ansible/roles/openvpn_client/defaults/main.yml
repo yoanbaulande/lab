@@ -1,0 +1,6 @@
+---
+# defaults file for roles/openvpn_client
+vpn_user_list:
+  - yoan
+destination_key: "/tmp/"
+vpn_server_name: infovpn

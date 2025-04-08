@@ -1,0 +1,11 @@
+---
+# defaults file for roles/consul
+
+consul_version: 1.18.0
+consul_dir_data: /var/lib/consul
+consul_dir_config: /etc/consul.d/
+consul_binary_path: /usr/local/bin
+consul_datacenter: tatooine
+consul_dns_domain: consul
+consul_master: false
+consul_group: meta-app_consul

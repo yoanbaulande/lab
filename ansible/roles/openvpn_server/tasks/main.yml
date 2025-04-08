@@ -1,0 +1,226 @@
+---
+# tasks file for roles/openvpn_server
+- name: Update apt packages
+  ansible.builtin.apt:
+    upgrade: "yes"
+    cache_valid_time: 3600
+
+- name: Install OpenVPN
+  ansible.builtin.apt:
+    name:
+      - openvpn
+      - easy-rsa
+      - iptables-persistent
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+  
+- name: Check if ca dir already.stat.exists
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/openvpn-ca/"
+  register: __check_openvpn_ca_dir_present
+
+- name: Create ca dir
+  ansible.builtin.command: "make-cadir {{ ansible_env.HOME }}/openvpn-ca"
+  when: __check_openvpn_ca_dir_present.stat.exists == false
+
+- name: Customize ca variable configuration
+  ansible.builtin.lineinfile:
+    dest: "{{ ansible_env.HOME }}/openvpn-ca/vars" 
+    regexp: "^{{ item.property | regex_escape() }}="
+    line: "{{ item.property }}={{ item.value }}"
+  loop:
+    - { property: 'export KEY_NAME', value: '{{ vpn_key_name }}' }
+    - { property: 'export KEY_COUNTRY', value: '{{ vpn_key_country }}' }
+    - { property: 'export KEY_PROVINCE', value: '{{ vpn_key_province }}' }
+    - { property: 'export KEY_CITY', value: '{{ vpn_key_city }}' }
+    - { property: 'export KEY_ORG', value: '{{ vpn_key_org }}' }
+    - { property: 'export KEY_EMAIL', value: '{{ vpn_key_email }}' }
+    - { property: 'export KEY_OU', value: '{{ vpn_key_ou }}' }
+    - { property: 'export KEY_DIR', value: '{{ ansible_env.HOME }}/openvpn-ca/keys' }
+    - { property: 'export KEY_CONFIG', value: '{{ ansible_env.HOME }}/openvpn-ca/openssl-1.1.1.cnf' }
+
+- name: Check if ca file already.stat.exists
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/openvpn-ca/pki/ca.crt"
+  register: __check_openvpn_ca_crt_file_present
+
+- name: Build the certificate authority
+  ansible.builtin.shell: >
+    ./easyrsa init-pki;
+    ./easyrsa --batch --req-cn="cn_{{ vpn_server_name }}" build-ca nopass;
+  args:
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+  when: __check_openvpn_ca_crt_file_present.stat.exists == false
+
+- name: Check if crl server file already.stat.exists
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/openvpn-ca/pki/crl.pem"
+  register: __check_openvpn_crl_server_crt_file_present
+    
+- name: Build crl and server certificate
+  ansible.builtin.shell: >
+    ./easyrsa --batch build-server-full "server_{{ vpn_server_name }}" nopass;
+    EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl;
+  args:
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+  when: __check_openvpn_crl_server_crt_file_present.stat.exists == false
+
+- name: Check if ta key file already.stat.exists
+  ansible.builtin.stat:
+    path: "{{ ansible_env.HOME }}/openvpn-ca/pki/ta.key"
+  register: __check_openvpn_ta_key_file_present
+
+- name: Build ta key
+  ansible.builtin.shell: >
+    source vars;
+    openvpn --genkey --secret pki/ta.key;
+  args:
+    chdir: "{{ ansible_env.HOME }}/openvpn-ca/"
+    executable: /bin/bash
+  when: __check_openvpn_ta_key_file_present.stat.exists == false
+
+- name: Copy key and cartificates to /etc/openvpn
+  ansible.builtin.copy:
+    remote_src: true
+    src: "{{ ansible_env.HOME }}/openvpn-ca/pki/{{ item }}"
+    dest: "/etc/openvpn/"
+    owner: root
+    group: root
+    mode: 0600
+  loop:
+    - "ta.key"
+    - "ca.crt"
+    - "private/ca.key"
+    - "private/server_{{ vpn_server_name }}.key"
+    - "issued/server_{{ vpn_server_name }}.crt"
+    - "crl.pem"
+
+- name: Check if conf file already.stat.exists
+  ansible.builtin.stat:
+    path: /etc/openvpn/openvpn.conf
+  register: __check_openvpn_conf_file_present
+
+- name: Generate server.conf from sample config
+  ansible.builtin.copy:
+    remote_src: true
+    src: "/usr/share/doc/openvpn/examples/sample-config-files/server.conf"
+    dest: "/etc/openvpn/server.conf"
+  when: __check_openvpn_conf_file_present.stat.exists == false
+
+- name: Adjust OpenVPN server configuration
+  ansible.builtin.lineinfile:
+    dest: "/etc/openvpn/server.conf"
+    regexp: "^{{ item.regex | regex_escape() }}"
+    line: "{{ item.value }}"
+  loop:
+    - { regex: ';user nobody', value: 'user nobody' }
+    - { regex: ';group nogroup', value: 'group nogroup' }
+    - { regex: ';push "redirect-gateway def1 bypass-dhcp"', value: 'push "redirect-gateway def1 bypass-dhcp"' }
+    - { regex: 'cert server.crt', value: 'cert server_{{ vpn_server_name }}.crt' }             
+    - { regex: 'key server.key', value: 'key server_{{ vpn_server_name }}.key' }
+    - { regex: ';topology subnet', value: 'topology subnet' }
+    - { regex: 'dh dh2048.pem', value: 'dh none' }
+    - { regex: ';compress lz4-v2', value: 'compress lzo' }
+
+- name: Add some secure lines
+  ansible.builtin.lineinfile:
+    dest: "/etc/openvpn/server.conf"
+    line: "{{ item }}"
+  loop:
+    - "ecdh-curve prime256v1"
+    - "auth SHA256"
+    - "cipher AES-128-GCM"
+    - "ncp-ciphers AES-128-GCM"
+    - "tls-server"
+    - "tls-version-min 1.2"
+    - "tls-cipher TLS-ECDHE-ECDSA-WITH-AES-128-GCM-SHA256"
+    - "client-config-dir /etc/openvpn/ccd"
+    - "status /var/log/openvpn/status.log"
+    - "proto udp4"
+    - "verb 3"
+    - "log-append /var/log/openvpn.log"
+    - "push \"route 10.0.1.0 255.255.255.0\""
+
+- name: Configuration IP forwarding
+  lineinfile:
+    path: /etc/sysctl.conf
+    regexp: '^#?net.ipv4.ip_forward'
+    line: 'net.ipv4.ip_forward = 1'
+    state: present
+
+- name: Ensure to have cdd directory
+  ansible.builtin.file:
+    path: /etc/openvpn/ccd
+    state: directory
+    owner: root
+    group: root
+    mode: 0600
+
+- name: Add iptables rules postrouting
+  ansible.builtin.iptables:
+    chain: POSTROUTING
+    table: nat
+    rule_num: "1"
+    source: 10.8.0.1/24
+    out_interface: enp3s0
+    jump: MASQUERADE
+
+- name: Add iptables rules postrouting
+  ansible.builtin.iptables:
+    chain: POSTROUTING
+    table: nat
+    rule_num: "1"
+    source: 10.8.0.0/24
+    out_interface: ens3
+    jump: MASQUERADE
+
+- name: Add iptables rule input tun0
+  ansible.builtin.iptables:
+    chain: INPUT
+    rule_num: "1"
+    in_interface: tun0
+    jump: ACCEPT
+
+- name: Add iptables rule forward tun0
+  ansible.builtin.iptables:
+    chain: FORWARD
+    rule_num: "1"
+    in_interface: ens3
+    out_interface: tun0
+    jump: ACCEPT
+
+- name: Add iptables rule forward tun0
+  ansible.builtin.iptables:
+    chain: FORWARD
+    rule_num: "1"
+    in_interface: tun0
+    out_interface: ens3
+    jump: ACCEPT
+
+- name: Add iptables rule input port openvpn
+  ansible.builtin.iptables:
+    chain: INPUT
+    rule_num: "1"
+    in_interface: ens3
+    jump: ACCEPT
+    protocol: "udp"
+    destination_port: "1194"
+
+- name: Config sysctl
+  ansible.builtin.command: sysctl -p
+  become: yes
+
+- name: Start OpenVPN systemd service
+  ansible.builtin.systemd:
+    name: openvpn@server
+    state: started
+    daemon_reload: true
+    enabled: true
+
+- name: Save iptables rules to persist them 
+  community.general.iptables_state:
+    state: saved
+    path: /etc/iptables/rules.v4
