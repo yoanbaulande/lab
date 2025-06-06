@@ -11,9 +11,18 @@
       function Header() {
         return <h1>Develop. Preview. Ship.</h1>;
       }
+
+      function Homepage() {
+        return (
+          <div>
+            <Header />
+            <p>Welcome to the homepage!</p>
+          </div>
+        );
+      }
       
       const root = ReactDOM.createRoot(app);
-      root.render(<Header />);
+      root.render(<Homepage />);
     </script>
   </body>
 </html>
