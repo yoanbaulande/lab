@@ -7,15 +7,22 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script type="text/jsx">
       const app = document.getElementById("app")
+      const names = ['Ada Lovelace', 'Grace Hopper', 'Margaret Hamilton'];
     
-      function Header() {
-        return <h1>Develop. Preview. Ship.</h1>;
+      function Header({ title }) {
+        console.log(title);
+        return <h1>{title}</h1>;
       }
 
       function Homepage() {
         return (
           <div>
-            <Header />
+            <Header title="Develop. Preview. Ship." />
+            <ul>
+              {names.map((name) => (
+                <li key={name}>{name}</li>
+              ))}
+            </ul>
             <p>Welcome to the homepage!</p>
           </div>
         );
